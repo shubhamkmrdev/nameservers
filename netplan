@@ -1,0 +1,56 @@
+- name: Copy nameserver IPs from resolv.conf to Netplan configuration
+  hosts: all
+  become: yes
+  tasks:
+
+    - name: Read nameservers from /etc/resolv.conf
+      ansible.builtin.slurp:
+        src: /etc/resolv.conf
+      register: resolv_conf_content
+
+    - name: Parse nameservers from resolv.conf
+      set_fact:
+        nameservers: "{{ resolv_conf_content.content | b64decode | regex_findall('nameserver\\s+([\\d\\.]+)') }}"
+
+    - name: Find Netplan configuration file
+      ansible.builtin.find:
+        paths: /etc/netplan/
+        patterns: "*.yaml"
+        recurse: yes
+      register: netplan_files
+
+    - name: Read the current Netplan configuration file
+      ansible.builtin.slurp:
+        src: "{{ netplan_files.files[0].path }}"
+      register: current_netplan_content
+      when: netplan_files.matched > 0
+
+    - name: Parse the current Netplan configuration
+      set_fact:
+        netplan_config: "{{ current_netplan_content.content | b64decode | from_yaml }}"
+      when: netplan_files.matched > 0
+
+  
+    - name: Insert nameservers line after gateway4
+      ansible.builtin.lineinfile:
+        path: "{{ netplan_files.files[0].path }}"
+        insertafter: '^.*gateway4:.*$'
+        line: "      nameservers:\n        addresses: [{{ nameservers | map('quote') | join(', ') }}]"
+        backup: yes  
+      when: netplan_files.matched > 0
+
+
+    - name: Read updated Netplan configuration file
+      ansible.builtin.slurp:
+        src: "{{ netplan_files.files[0].path }}"
+      register: updated_netplan_content
+      when: netplan_files.matched > 0
+
+    - name: Display updated Netplan configuration
+      debug:
+        msg: "{{ updated_netplan_content.content | b64decode }}"
+      when: netplan_files.matched > 0
+
+    - name: Apply Netplan configuration
+      command: netplan apply
+      when: netplan_files.matched > 0
