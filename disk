@@ -1,0 +1,25 @@
+- name: Extend disk partition and logical volume
+  hosts: all
+  become: yes
+  tasks:
+
+    - name: Rescan the block device (sda)
+      ansible.builtin.shell:
+        cmd: echo 1 > /sys/class/block/sda/device/rescan
+
+
+    - name: Grow the partition on /dev/sda3
+      ansible.builtin.shell:
+        cmd: growpart /dev/sda 3
+      ignore_errors: yes
+
+
+    - name: Resize the physical volume on /dev/sda3
+      ansible.builtin.shell:
+        cmd: pvresize /dev/sda3
+      ignore_errors: yes
+
+    - name: Extend the logical volume (ubnutu-vg/ubnutu-lv) by 100% of free space
+      ansible.builtin.shell:
+        cmd: lvextend -rl +100%FREE /dev/mapper/ubuntu--vg-ubuntu--lv
+      ignore_errors: yes
