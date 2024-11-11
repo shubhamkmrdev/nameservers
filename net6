@@ -1,0 +1,46 @@
+---
+- name: Copy nameserver IPs from resolv.conf to Netplan configuration
+  hosts: all
+  become: yes
+  tasks:
+
+    - name: Read nameservers from /etc/resolv.conf
+      ansible.builtin.slurp:
+        src: /etc/resolv.conf
+      register: resolv_conf_content
+
+    - name: Parse nameservers from resolv.conf
+      set_fact:
+        nameservers: "{{ resolv_conf_content.content | b64decode | regex_findall('nameserver\\s+([\\d\\.]+)') }}"
+
+    - name: Find Netplan configuration file
+      ansible.builtin.find:
+        paths: /etc/netplan/
+        patterns: "*.yaml"
+        recurse: yes
+      register: netplan_files
+
+    - name: Backup the Netplan configuration file
+      ansible.builtin.copy:
+        src: "{{ netplan_files.files[0].path }}"
+        dest: "{{ netplan_files.files[0].path }}.bak"
+        remote_src: yes
+      when: netplan_files.matched > 0
+
+    - name: Set dhcp6 to false if present
+      ansible.builtin.replace:
+        path: "{{ netplan_files.files[0].path }}"
+        regexp: '(^ {6}dhcp6:).*'
+        replace: '\1 false  # Set to false if using static IP'
+      when: netplan_files.matched > 0
+
+    - name: Insert nameservers line under ens33 in Netplan configuration
+      ansible.builtin.replace:
+        path: "{{ netplan_files.files[0].path }}"
+        regexp: '(^ {6}gateway4:.*$)'
+        replace: '\1\n      nameservers:\n        addresses: [{{ nameservers | map("quote") | join(", ") }}]'
+      when: netplan_files.matched > 0
+
+    - name: Apply Netplan configuration
+      command: netplan apply
+      when: netplan_files.matched > 0
