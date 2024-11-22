@@ -8,7 +8,7 @@ LOG_FILE="scp_transfer.log"
 
 # Prompt user for source and destination
 read -p "Enter the source file (e.g., user@source_server:/path/to/file): " SOURCE
-read -p "Enter the destination path (e.g., /local/path/ or user@dest_server:/remote/path/): " DESTINATION
+read -p "Enter the destination path (e.g., user@dest_server:/remote/path/): " DESTINATION
 
 # Prompt for password
 read -s -p "Enter the password for the remote server: " PASSWORD
