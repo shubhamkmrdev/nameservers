@@ -1,1 +1,25 @@
 
+#!/bin/bash
+
+# Script for SCP file transfer in the background with progress stats using nohup
+# Ensure SSH key-based authentication is set up for passwordless login
+
+# Define log files
+LOG_FILE="scp_transfer.log"
+
+# Prompt user for source and destination
+read -p "Enter the source file (e.g., user@source_server:/path/to/file): " SOURCE
+read -p "Enter the destination path (e.g., /local/path/ or user@dest_server:/remote/path/): " DESTINATION
+
+# Perform SCP with verbose mode (-v) and nohup in the background
+echo "Starting SCP transfer in the background using nohup with progress stats..."
+nohup scp -vr "$SOURCE" "$DESTINATION" > "$LOG_FILE" 2>&1 &
+
+# Get the background process ID
+SCP_PID=$!
+echo "SCP transfer started with PID: $SCP_PID"
+echo "Logs (including progress): $LOG_FILE"
+
+# Notify the user
+echo "You can monitor progress in $LOG_FILE."
+echo "Run 'tail -f $LOG_FILE' to view the logs and progress in real-time."
