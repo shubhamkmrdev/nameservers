@@ -1,0 +1,27 @@
+#!/bin/bash
+
+# Script for rsync file transfer in the background with progress stats and password prompt
+
+# Define log files
+LOG_FILE="rsync_transfer.log"
+
+# Prompt user for source and destination
+read -p "Enter the source file/directory (e.g., /path/to/file or user@source_server:/path/to/file): " SOURCE
+read -p "Enter the destination path (e.g., /local/path/ or user@dest_server:/remote/path/): " DESTINATION
+
+# Prompt for password
+read -s -p "Enter the password for the remote server: " PASSWORD
+echo
+
+# Start rsync with progress in the background using sshpass
+echo "Starting rsync transfer in the background with progress stats..."
+nohup sshpass -p "$PASSWORD" rsync -az --progress "$SOURCE" "$DESTINATION" > "$LOG_FILE" 2>&1 &
+
+# Get the background process ID
+RSYNC_PID=$!
+echo "Rsync transfer started with PID: $RSYNC_PID"
+echo "Logs (including progress): $LOG_FILE"
+
+# Notify the user
+echo "You can monitor progress in $LOG_FILE."
+echo "Run 'tail -f $LOG_FILE' to view the logs/errors in real-time."
