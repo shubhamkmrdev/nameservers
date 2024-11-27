@@ -1,0 +1,47 @@
+---
+- name: SCP file transfer in the background
+  hosts: localhost
+  gather_facts: no
+  vars:
+    log_file: "scp_transfer.log"
+  tasks:
+
+    - name: Prompt for SCP source file path
+      ansible.builtin.prompt:
+        name: "source"
+        prompt: "Enter the source file (e.g., user@source_server:/path/to/file)"
+        private: no
+
+    - name: Prompt for SCP destination path
+      ansible.builtin.prompt:
+        name: "destination"
+        prompt: "Enter the destination path (e.g., user@dest_server:/remote/path/)"
+        private: no
+
+    - name: Prompt for password
+      ansible.builtin.prompt:
+        name: "password"
+        prompt: "Enter the password for the remote server"
+        private: yes
+
+    - name: Ensure sshpass is installed on localhost
+      ansible.builtin.package:
+        name: sshpass
+        state: present
+
+    - name: Perform SCP file transfer using sshpass in the background
+      ansible.builtin.shell: |
+        nohup sshpass -p "{{ password }}" scp -vr "{{ source }}" "{{ destination }}" > "{{ log_file }}" 2>&1 &
+      async: 3600 # Run in the background for up to 1 hour
+      poll: 0
+      register: scp_transfer
+
+    - name: Output the SCP transfer PID
+      debug:
+        msg: "SCP transfer started with PID: {{ scp_transfer.ansible_facts.pid }}"
+
+    - name: Notify the user about logs
+      debug:
+        msg: |
+          Logs (including progress): {{ log_file }}
+          You can monitor progress by running 'tail -f {{ log_file }}' to view logs/errors in real-time.
