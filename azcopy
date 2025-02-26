@@ -1,0 +1,48 @@
+#!/bin/bash
+
+# Configuration variables
+read -p "Enter the local directory to copy from: " SOURCE_DIR  # Local directory to copy from
+read -p "Enter the Azure destination URL: " AZURE_CONTAINER # Azure destination
+LOG_FILE="/var/log/azure_sync_$(date +%Y%m%d_%H%M%S).log"  # Log file with timestamp
+
+# Function to log messages
+log_message() {
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    echo "[$timestamp] $1" >> "$LOG_FILE"
+    echo "[$timestamp] $1"  # Echo to console too
+}
+
+# Check if source directory exists
+if [ ! -d "$SOURCE_DIR" ]; then
+    log_message "Error: Source directory $SOURCE_DIR does not exist"
+    exit 1
+fi
+
+
+# Start the copy process in background
+log_message "Starting background copy from $SOURCE_DIR to $AZURE_CONTAINER"
+
+# Run azcopy in background with nohup
+nohup azcopy copy "$SOURCE_DIR" "$AZURE_CONTAINER" --recursive=true 2>> "$LOG_FILE" >> "$LOG_FILE" &
+
+# Capture the PID of the background process
+SYNC_PID=$!
+
+# Log the process start
+log_message "Sync process started with PID: $SYNC_PID"
+log_message "Check $LOG_FILE for detailed progress"
+
+# Function to check if process is running
+check_process() {
+    if ps -p $SYNC_PID > /dev/null; then
+        log_message "Sync process (PID: $SYNC_PID) is still running"
+    else
+        log_message "Sync process (PID: $SYNC_PID) has completed"
+    fi
+}
+
+# Check process status after 5 seconds
+sleep 5
+check_process
+
+exit 0
