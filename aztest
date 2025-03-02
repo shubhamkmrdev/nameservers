@@ -1,0 +1,68 @@
+#!/bin/bash
+
+# Configuration variables
+read -p "Enter the local directory to copy from: " SOURCE_DIR  # Local directory to copy from
+read -p "Enter the Azure destination URL: " AZURE_CONTAINER   # Azure destination
+read -p "Enter notification email address: " EMAIL_ADDR      # Email address for notifications
+LOG_FILE="/var/log/azure_sync_$(date +%Y%m%d_%H%M%S).log"     # Log file with timestamp
+
+# Function to log messages
+log_message() {
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    echo "[$timestamp] $1" >> "$LOG_FILE"
+    echo "[$timestamp] $1"  # Echo to console too
+}
+
+# Function to send email notification
+send_completion_email() {
+    local subject="Azure Sync Completion Notification"
+    local message="Azure sync process (PID: $SYNC_PID) completed at $(date '+%Y-%m-%d %H:%M:%S')\n"
+    message+="Source: $SOURCE_DIR\n"
+    message+="Destination: $AZURE_CONTAINER\n"
+    message+="Log file: $LOG_FILE"
+    
+    echo -e "$message" | mail -s "$subject" "$EMAIL_ADDR"
+}
+
+# Check if source directory exists
+if [ ! -d "$SOURCE_DIR" ]; then
+    log_message "Error: Source directory $SOURCE_DIR does not exist"
+    exit 1
+fi
+
+# Start the copy process in background
+log_message "Starting background copy from $SOURCE_DIR to $AZURE_CONTAINER"
+
+# Run azcopy in background with nohup
+nohup azcopy copy "$SOURCE_DIR" "$AZURE_CONTAINER" --recursive=true 2>> "$LOG_FILE" >> "$LOG_FILE" &
+
+# Capture the PID of the background process
+SYNC_PID=$!
+
+# Log the process start
+log_message "Sync process started with PID: $SYNC_PID"
+log_message "Check $LOG_FILE for detailed progress"
+
+# Function to check if process is running
+check_process() {
+    if ps -p $SYNC_PID > /dev/null; then
+        log_message "Sync process (PID: $SYNC_PID) is still running"
+        return 1
+    else
+        log_message "Sync process (PID: $SYNC_PID) has completed"
+        send_completion_email
+        return 0
+    fi
+}
+
+# Monitor process until completion
+check_interval=5  # Check every 5 seconds
+while true; do
+    check_process
+    if [ $? -eq 0 ]; then
+        break
+    fi
+    sleep $check_interval
+done
+
+exit 0
