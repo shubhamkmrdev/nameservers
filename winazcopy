@@ -1,0 +1,95 @@
+# Parameters
+$sourcePath = "C:\Data\ToCopy"                    # Local source directory
+$storageAccountName = "yourstorageaccount"        # Azure Storage Account name
+$containerName = "yourcontainer"                  # Azure Storage Container name
+$sasToken = "?sv=2022-11-02&ss=bfqt&srt=sco&sp=rwdlacupiytfx&se=2025-03-03T23:59:59Z&st=2025-03-03T00:00:00Z&spr=https&sig=yourSignature"  # SAS token
+$azCopyPath = "C:\Program Files (x86)\Microsoft SDKs\Azure\AzCopy\azcopy.exe"
+
+# Log file setup
+$logDir = "C:\Logs\AzureCopy"                     # Log directory
+$logFile = "$logDir\azure_copy_$(Get-Date -Format 'yyyyMMdd_HHmmss').log"
+
+# Function to write to log file
+function Write-Log {
+    param (
+        [string]$Message,
+        [string]$Level = "INFO"
+    )
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $logEntry = "[$timestamp] [$Level] $Message"
+    Write-Host $logEntry
+    Add-Content -Path $logFile -Value $logEntry
+}
+
+# Create log directory if it doesn't exist
+if (-not (Test-Path $logDir)) {
+    New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+}
+
+# Start logging
+Write-Log "Starting Azure copy script execution"
+
+# Validation checks
+if (-not (Test-Path $azCopyPath)) {
+    Write-Log "AzCopy not found at $azCopyPath" "ERROR"
+    exit 1
+}
+
+if (-not (Test-Path $sourcePath)) {
+    Write-Log "Source path $sourcePath does not exist" "ERROR"
+    exit 1
+}
+
+# Construct destination URL
+$destinationUrl = "https://$storageAccountName.blob.core.windows.net/$containerName$sasToken"
+Write-Log "Copying from: $sourcePath"
+Write-Log "Copying to: https://$storageAccountName.blob.core.windows.net/$containerName"
+
+try {
+    # Get total size of source data
+    $totalSize = (Get-ChildItem $sourcePath -Recurse | Measure-Object -Property Length -Sum).Sum / 1MB
+    Write-Log "Total size to copy: $totalSize MB"
+
+    # Start copy operation
+    Write-Log "Initiating AzCopy operation"
+    $startTime = Get-Date
+    
+    # Execute AzCopy with detailed output
+    $copyProcess = Start-Process -FilePath $azCopyPath -ArgumentList "copy `"$sourcePath`" `"$destinationUrl`" --recursive --log-level=INFO" -NoNewWindow -PassThru -RedirectStandardOutput "azcopy_output.txt"
+    
+    # Wait for completion and monitor progress
+    while (-not $copyProcess.HasExited) {
+        Start-Sleep -Seconds 5
+        $output = Get-Content "azcopy_output.txt" -Raw
+        if ($output) {
+            Write-Log "Progress update: $output"
+        }
+    }
+
+    # Check exit code
+    if ($copyProcess.ExitCode -eq 0) {
+        $endTime = Get-Date
+        $duration = $endTime - $startTime
+        Write-Log "Copy completed successfully in $($duration.TotalMinutes) minutes"
+        
+        # Log summary
+        $fileCount = (Get-ChildItem $sourcePath -Recurse -File).Count
+        Write-Log "Total files copied: $fileCount"
+        Write-Log "Total size copied: $totalSize MB"
+    } else {
+        Write-Log "Copy operation failed with exit code: $($copyProcess.ExitCode)" "ERROR"
+        $errorOutput = Get-Content "azcopy_output.txt" -Raw
+        Write-Log "Error details: $errorOutput" "ERROR"
+    }
+}
+catch {
+    Write-Log "Exception occurred: $($_.Exception.Message)" "ERROR"
+    Write-Log "Stack trace: $($_.ScriptStackTrace)" "ERROR"
+}
+finally {
+    # Cleanup temporary output file
+    if (Test-Path "azcopy_output.txt") {
+        Remove-Item "azcopy_output.txt" -Force
+    }
+    Write-Log "Script execution completed"
+}
