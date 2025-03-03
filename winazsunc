@@ -1,0 +1,107 @@
+# Parameters
+$sourcePath = "C:\Data\ToBackup"                  # Local source directory to backup
+$storageAccountName = "yourstorageaccount"        # Azure Storage Account name
+$containerName = "backups"                       # Azure Storage Container name
+$sasToken = "?sv=2022-11-02&ss=bfqt&srt=sco&sp=rwdlacupiytfx&se=2025-03-03T23:59:59Z&st=2025-03-03T00:00:00Z&spr=https&sig=yourSignature"  # SAS token
+$azCopyPath = "C:\Program Files (x86)\Microsoft SDKs\Azure\AzCopy\azcopy.exe"
+
+# Log file setup
+$logDir = "C:\Logs\AzureBackup"                   # Log directory
+$logFile = "$logDir\azure_backup_$(Get-Date -Format 'yyyyMMdd_HHmmss').log"
+
+# Function to write to log file
+function Write-Log {
+    param (
+        [string]$Message,
+        [string]$Level = "INFO"
+    )
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $logEntry = "[$timestamp] [$Level] $Message"
+    Write-Host $logEntry
+    Add-Content -Path $logFile -Value $logEntry
+}
+
+# Create log directory if it doesn't exist
+if (-not (Test-Path $logDir)) {
+    New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+}
+
+Write-Log "Starting Azure backup/sync script execution"
+
+# Validation checks
+if (-not (Test-Path $azCopyPath)) {
+    Write-Log "AzCopy not found at $azCopyPath" "ERROR"
+    exit 1
+}
+
+if (-not (Test-Path $sourcePath)) {
+    Write-Log "Source path $sourcePath does not exist" "ERROR"
+    exit 1
+}
+
+# Construct destination URL
+$destinationUrl = "https://$storageAccountName.blob.core.windows.net/$containerName$sasToken"
+Write-Log "Syncing from: $sourcePath"
+Write-Log "Syncing to: https://$storageAccountName.blob.core.windows.net/$containerName"
+
+try {
+    # Get initial stats
+    $totalFiles = (Get-ChildItem $sourcePath -Recurse -File).Count
+    $totalSizeMB = [math]::Round(((Get-ChildItem $sourcePath -Recurse | Measure-Object -Property Length -Sum).Sum / 1MB), 2)
+    Write-Log "Source stats - Total files: $totalFiles, Total size: $totalSizeMB MB"
+
+    # Start sync operation
+    Write-Log "Initiating AzCopy sync operation"
+    $startTime = Get-Date
+    
+    # Execute AzCopy sync with mirror mode
+    $syncArgs = "sync `"$sourcePath`" `"$destinationUrl`" --recursive --delete-destination=true --log-level=INFO"
+    $syncProcess = Start-Process -FilePath $azCopyPath -ArgumentList $syncArgs -NoNewWindow -PassThru -RedirectStandardOutput "azcopy_output.txt"
+    
+    # Monitor progress
+    while (-not $syncProcess.HasExited) {
+        Start-Sleep -Seconds 5
+        $output = Get-Content "azcopy_output.txt" -Raw
+        if ($output -and $output -match "Completed.*Files") {
+            Write-Log "Progress: $output"
+        }
+    }
+
+    # Check results
+    if ($syncProcess.ExitCode -eq 0) {
+        $endTime = Get-Date
+        $duration = $endTime - $startTime
+        
+        # Parse output for detailed stats
+        $output = Get-Content "azcopy_output.txt" -Raw
+        $filesSynced = if ($output -match "Number of File Transfers: (\d+)") { $matches[1] } else { "Unknown" }
+        $bytesTransferred = if ($output -match "Total Bytes Transferred: (\d+)") { 
+            [math]::Round(($matches[1] / 1MB), 2) 
+        } else { "Unknown" }
+
+        Write-Log "Backup/Sync completed successfully in $($duration.TotalMinutes) minutes"
+        Write-Log "Files synced: $filesSynced"
+        Write-Log "Data transferred: $bytesTransferred MB"
+    } else {
+        Write-Log "Sync operation failed with exit code: $($syncProcess.ExitCode)" "ERROR"
+        $errorOutput = Get-Content "azcopy_output.txt" -Raw
+        Write-Log "Error details: $errorOutput" "ERROR"
+    }
+}
+catch {
+    Write-Log "Exception occurred: $($_.Exception.Message)" "ERROR"
+    Write-Log "Stack trace: $($_.ScriptStackTrace)" "ERROR"
+}
+finally {
+    # Cleanup
+    if (Test-Path "azcopy_output.txt") {
+        Remove-Item "azcopy_output.txt" -Force
+    }
+    Write-Log "Script execution completed"
+    
+    # Verify sync by checking a sample file (optional)
+    $sampleFile = Get-ChildItem $sourcePath -File | Select-Object -First 1
+    if ($sampleFile) {
+        Write-Log "Sample file check: $($sampleFile.Name) exists in source"
+    }
+}
