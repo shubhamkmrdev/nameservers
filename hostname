@@ -1,0 +1,17 @@
+---
+- name: Gather Hostname and IP information
+  hosts: all
+  gather_facts: yes
+  tasks:
+    - name: Get inventory hostname and server hostname
+      set_fact:
+        inventory_hostname: "{{ inventory_hostname }}"
+        server_hostname: "{{ ansible_facts['hostname'] }}"
+        ip_address: "{{ ansible_default_ipv4.address }}"
+
+    - name: Append to CSV file on localhost
+      delegate_to: localhost
+      lineinfile:
+        path: "/tmp/host_info.csv"
+        line: "{{ inventory_hostname }},{{ server_hostname }},{{ ip_address }}"
+        create: yes
