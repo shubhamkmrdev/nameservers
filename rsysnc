@@ -15,7 +15,7 @@ echo
 
 # Start rsync with progress in the background using sshpass
 echo "Starting rsync transfer in the background with progress stats..."
-nohup sshpass -p "$PASSWORD" rsync -az --progress "$SOURCE" "$DESTINATION" > "$LOG_FILE" 2>&1 &
+nohup sshpass -p "$PASSWORD" rsync -azo --progress "$SOURCE" "$DESTINATION" > "$LOG_FILE" 2>&1 &
 
 # Get the background process ID
 RSYNC_PID=$!
