@@ -1,0 +1,145 @@
+#!/bin/bash
+
+# Function to display help
+show_help() {
+    echo "Usage: $0 [OPTIONS]"
+    echo "Copy data from one Linux server to another in the background using rsync over SSH."
+    echo
+    echo "Options:"
+    echo "  --help    Display this help message and exit"
+    echo
+    echo "How to use:"
+    echo "1. Run the script without arguments: $0"
+    echo "2. Follow the interactive prompts to enter:"
+    echo "   - Source directory (local path to copy from)"
+    echo "   - Remote username (SSH username for remote server)"
+    echo "   - Remote host (IP or hostname of remote server)"
+    echo "   - Remote destination directory (path on remote server)"
+    echo "   - SSH password (will be hidden when typing)"
+    echo
+    echo "Example flow:"
+    echo "  $ $0"
+    echo "  Enter source directory: /home/user/data"
+    echo "  Enter remote username: john"
+    echo "  Enter remote host (IP or hostname): server.example.com"
+    echo "  Enter remote destination directory: /backup/data"
+    echo "  Enter SSH password: [hidden input]"
+    echo
+    echo "Notes:"
+    echo "- Requires sshpass to be installed"
+    echo "- Creates a log file in /var/log/ with timestamp"
+    echo "- Runs rsync in background with nohup"
+    echo "- Provides debug output if connection fails"
+    exit 0
+}
+
+# Check for --help argument
+if [ "$1" = "--help" ]; then
+    show_help
+fi
+
+# Function to read input with a prompt
+prompt_input() {
+    local prompt="$1"
+    local var_name="$2"
+    read -p "$prompt" $var_name
+    if [ -z "${!var_name}" ]; then
+        echo "Error: Input cannot be empty" >&2
+        exit 1
+    fi
+}
+
+# Function to test SSH connection
+test_ssh_connection() {
+    echo "Testing SSH connection..."
+    sshpass -p "$SSH_PASSWORD" ssh -v -o ConnectTimeout=5 $REMOTE_USER@$REMOTE_HOST "echo Connection successful" 2>&1
+    return $?
+}
+
+# Read all configuration from prompts
+prompt_input "Enter source directory: " SOURCE_DIR
+prompt_input "Enter remote username: " REMOTE_USER
+prompt_input "Enter remote host (IP or hostname): " REMOTE_HOST
+prompt_input "Enter remote destination directory: " REMOTE_DIR
+
+# Prompt for password with hidden input
+echo -n "Enter SSH password: "
+read -s SSH_PASSWORD
+echo
+if [ -z "$SSH_PASSWORD" ]; then
+    echo "Error: Password cannot be empty" >&2
+    exit 1
+fi
+
+# Set log file
+LOG_FILE="/var/log/sync_$(date +%Y%m%d_%H%M%S).log"
+
+# Check if sshpass is installed
+if ! command -v sshpass >/dev/null 2>&1; then
+    echo "Error: sshpass is not installed. Please install it first" >&2
+    echo "On Ubuntu/Debian: sudo apt-get install sshpass" >&2
+    echo "On CentOS/RHEL: sudo yum install sshpass" >&2
+    exit 1
+fi
+
+# Check if source directory exists
+if [ ! -d "$SOURCE_DIR" ]; then
+    echo "Error: Source directory $SOURCE_DIR does not exist" >&2
+    exit 1
+fi
+
+# Test SSH connection with verbose output
+test_ssh_connection > /tmp/ssh_test.log
+if [ $? -ne 0 ]; then
+    echo "Error: SSH connection test failed" >&2
+    echo "Debug output from SSH attempt:" >&2
+    cat /tmp/ssh_test.log >&2
+    echo "The password works manually but failed here. Possible issues:" >&2
+    echo "- Special characters in password need escaping" >&2
+    echo "- Server might require interactive authentication" >&2
+    echo "- SSH config might differ for rsync" >&2
+    read -p "Would you like to try again with a different password? (y/n): " retry
+    if [ "$retry" = "y" ] || [ "$retry" = "Y" ]; then
+        echo -n "Enter new SSH password: "
+        read -s SSH_PASSWORD
+        echo
+        test_ssh_connection > /tmp/ssh_test.log
+        if [ $? -ne 0 ]; then
+            echo "Error: Still cannot connect. See debug output:" >&2
+            cat /tmp/ssh_test.log >&2
+            rm -f /tmp/ssh_test.log
+            exit 1
+        fi
+    else
+        rm -f /tmp/ssh_test.log
+        exit 1
+    fi
+fi
+rm -f /tmp/ssh_test.log
+
+# Create rsync command with sshpass and verbose output
+RSYNC_CMD="sshpass -p '$SSH_PASSWORD' rsync -avz --progress -e 'ssh -v' $SOURCE_DIR $REMOTE_USER@$REMOTE_HOST:$REMOTE_DIR"
+
+# Execute rsync in background with nohup
+echo "Starting background sync from $SOURCE_DIR to $REMOTE_HOST:$REMOTE_DIR"
+echo "Log file: $LOG_FILE"
+nohup sh -c "$RSYNC_CMD" >> "$LOG_FILE" 2>&1 &
+
+# Get the process ID
+PID=$!
+
+# Wait a moment and check if process is running
+sleep 2
+if ps -p $PID > /dev/null; then
+    echo "Sync started successfully with PID $PID"
+    echo "You can monitor progress in $LOG_FILE"
+else
+    echo "Warning: Sync process may have failed to start" >&2
+    echo "Check $LOG_FILE for details" >&2
+    if grep -q "Permission denied" "$LOG_FILE" 2>/dev/null; then
+        echo "Error: Authentication failed despite successful test" >&2
+        echo "Debug info in $LOG_FILE" >&2
+    fi
+fi
+
+exit 0
