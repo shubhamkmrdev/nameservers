@@ -1,0 +1,63 @@
+---
+- name: Collect server data horizontally with headings and send via email
+  hosts: all
+  vars:
+    email_recipient: "admin@example.com"
+    email_sender: "ansible@controlnode"
+    smtp_server: "smtp.example.com"
+    smtp_port: 587
+    smtp_user: "your_smtp_username"
+    smtp_password: "your_smtp_password"
+    report_file: "/tmp/server_report_{{ ansible_date_time.iso8601_basic_short }}.txt"
+
+  tasks:
+    - name: Gather system facts
+      ansible.builtin.setup:
+        gather_subset:
+          - '!all'
+          - 'network'
+          - 'hardware'
+          - 'distribution'
+
+    - name: Collect server data into a fact
+      ansible.builtin.set_fact:
+        server_info: "{{ server_info | default([]) + [{'hostname': inventory_hostname, 'ip': ansible_default_ipv4.address, 'cpu': ansible_processor_cores, 'os': ansible_distribution + ' ' + ansible_distribution_version}] }}"
+      delegate_facts: true
+
+    - name: Create report file with header
+      ansible.builtin.copy:
+        content: "{{ '%-20s | %-15s | %-5s | %-20s\n' | format('Hostname', 'IP', 'CPU', 'OS') }}{{ '-' * 20 }} | {{ '-' * 15 }} | {{ '-' * 5 }} | {{ '-' * 20 }}"
+        dest: "{{ report_file }}"
+        mode: '0644'
+      delegate_to: localhost
+      run_once: true
+
+    - name: Append server data to report file
+      ansible.builtin.lineinfile:
+        path: "{{ report_file }}"
+        line: "{{ '%-20s | %-15s | %-5s | %-20s' | format(item.hostname, item.ip, item.cpu | string, item.os) }}"
+        mode: '0644'
+      loop: "{{ server_info }}"
+      delegate_to: localhost
+      run_once: true
+
+    - name: Send email with server report
+      ansible.builtin.mail:
+        host: "{{ smtp_server }}"
+        port: "{{ smtp_port }}"
+        username: "{{ smtp_user }}"
+        password: "{{ smtp_password }}"
+        subject: "Server Summary Report - {{ ansible_date_time.date }}"
+        body: "{{ lookup('file', report_file) }}"
+        from: "{{ email_sender }}"
+        to: "{{ email_recipient }}"
+        subtype: plain
+      delegate_to: localhost
+      run_once: true
+
+    - name: Clean up report file
+      ansible.builtin.file:
+        path: "{{ report_file }}"
+        state: absent
+      delegate_to: localhost
+      run_once: true
