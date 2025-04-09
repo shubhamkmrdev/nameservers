@@ -1,0 +1,91 @@
+---
+- name: Collect data from multiple hosts and send via SMTP from localhost
+  hosts: all
+  vars:
+    email_recipient: "admin@example.com"
+    email_sender: "ansible@yourdomain.com"
+    smtp_server: "smtp.example.com"
+    smtp_port: 587
+    smtp_user: "your_smtp_username"
+    smtp_password: "your_smtp_password"
+    report_file: "/tmp/server_report_{{ ansible_date_time.iso8601_basic_short }}.html"
+
+  tasks:
+    - name: Gather system facts from inventory hosts
+      ansible.builtin.setup:
+        gather_subset:
+          - '!all'
+          - 'network'
+          - 'distribution'
+
+    - name: Collect server data into a fact with defaults
+      ansible.builtin.set_fact:
+        server_info: "{{ server_info | default([]) + [{'hostname': inventory_hostname, 'ip': ansible_default_ipv4.address | default('N/A'), 'os': (ansible_distribution | default('Unknown')) + ' ' + (ansible_distribution_version | default('N/A'))}] }}"
+      delegate_facts: true
+
+- name: Generate and send HTML report from localhost
+  hosts: localhost
+  connection: local
+  tasks:
+    - name: Create HTML report file on localhost
+      ansible.builtin.copy:
+        content: |
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <style>
+              table {
+                border-collapse: collapse;
+                width: 80%;
+                margin: 20px 0;
+              }
+              th, td {
+                border: 1px solid #ddd;
+                padding: 8px;
+                text-align: left;
+              }
+              th {
+                background-color: #f2f2f2;
+              }
+              tr:nth-child(even) {
+                background-color: #f9f9f9;
+              }
+            </style>
+          </head>
+          <body>
+            <h2>Server Summary Report - {{ ansible_date_time.date }}</h2>
+            <table>
+              <tr>
+                <th>Hostname</th>
+                <th>IP</th>
+                <th>OS</th>
+              </tr>
+              {% for item in hostvars | dict2items | selectattr('value.server_info', 'defined') | map(attribute='value.server_info') | list | flatten %}
+              <tr>
+                <td>{{ item.hostname }}</td>
+                <td>{{ item.ip }}</td>
+                <td>{{ item.os }}</td>
+              </tr>
+              {% endfor %}
+            </table>
+          </body>
+          </html>
+        dest: "{{ report_file }}"
+        mode: '0644'
+
+    - name: Send HTML email via SMTP server from localhost
+      ansible.builtin.mail:
+        host: "{{ smtp_server }}"
+        port: "{{ smtp_port }}"
+        username: "{{ smtp_user }}"
+        password: "{{ smtp_password }}"
+        subject: "Server Summary Report - {{ ansible_date_time.date }}"
+        body: "{{ lookup('file', report_file) }}"
+        from: "{{ email_sender }}"
+        to: "{{ email_recipient }}"
+        subtype: html
+
+    - name: Clean up report file on localhost
+      ansible.builtin.file:
+        path: "{{ report_file }}"
+        state: absent
